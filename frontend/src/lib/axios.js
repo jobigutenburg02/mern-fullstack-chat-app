@@ -1,6 +1,6 @@
-import axios from 'axios'
+const MODE = import.meta.env.MODE || 'production'
 
 export const axiosInstance = axios.create({
-    baseURL: import.meta.env.MODE === 'development' ? "http://localhost:3000/api": "/api",
-    withCredentials: true, // send cookies in every request
+  baseURL: MODE === 'development' ? "http://localhost:3000/api" : "/api",
+  withCredentials: true,
 })
