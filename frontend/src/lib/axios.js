@@ -1,3 +1,5 @@
+import axios from 'axios'
+
 const MODE = import.meta.env.MODE || 'production'
 
 export const axiosInstance = axios.create({

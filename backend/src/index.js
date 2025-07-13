@@ -26,7 +26,7 @@ app.use('/api/messages', messageRoutes)
 // serve both frontend and backend in the same port
 if(process.env.NODE_ENV==='production'){
     app.use(express.static(path.join(_dirname, "../frontend/dist")))
-    app.get("*", (req, res) => {
+    app.get(/(.*)/, (req, res) => {
         res.sendFile(path.join(_dirname, "../frontend", "dist", "index.html"))
     })
 }
