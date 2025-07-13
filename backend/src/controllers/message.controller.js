@@ -38,7 +38,7 @@ export const getMessages = async (req, res) => {
 export const sendMessage = async (req, res) => {
     try{
         const { text, image } = req.body
-        const { id: receiverId } = req.params // receiver's id is fetched from '/send/:id' as parameter
+        const { id: receiverId } = req.params // receiver's id is fetched from '/send/(id)' as parameter
         const senderId = req.user._id
 
         let imageUrl;
