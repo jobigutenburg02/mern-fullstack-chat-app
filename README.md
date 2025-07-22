@@ -52,36 +52,8 @@ CLOUDINARY_CLOUD_NAME=your_cloud_name
 CLOUDINARY_API_KEY=your_api_key
 CLOUDINARY_API_SECRET=your_api_secret
 PORT=3000
+NODE_ENV="development"
 ```
-
-**Frontend `.env`:**
-```env
-VITE_API_URL=http://localhost:3000/api
-```
-
----
-
-## Running the Backend
-
-```bash
-cd chat-app/backend
-npm install
-npm run dev
-```
-Visit [http://localhost:3000](http://localhost:3000)
-
----
-
-## Running the Frontend
-
-```bash
-cd chat-app/frontend
-npm install
-npm run dev
-```
-Visit [http://localhost:5173](http://localhost:5173)
-
----
 
 ## API Endpoints
 
