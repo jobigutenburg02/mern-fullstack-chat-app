@@ -18,6 +18,7 @@ export function getReceiverSocketId(userId) {
 // used to store online users
 const userSocketMap = {} // {userId: socketId}
 
+// Listen for new socket connections
 io.on('connection', (socket) => {
     console.log('a user connected', socket.id)
 
@@ -26,11 +27,12 @@ io.on('connection', (socket) => {
     
     // used to send events to all connected clients
     io.emit("getOnlineUsers", Object.keys(userSocketMap))
-
+    
+    // Listen for socket disconnect event
     socket.on('disconnect', () => {
         console.log('a user disconnected', socket.id)
-        delete userSocketMap[userId]
-        io.emit("getOnlineUsers", Object.keys(userSocketMap))
+        delete userSocketMap[userId] // Remove user from online users map
+        io.emit("getOnlineUsers", Object.keys(userSocketMap)) // Emit updated list of online users
     })
 })
 
