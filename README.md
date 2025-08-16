@@ -88,5 +88,4 @@ All endpoints requiring authentication expect a valid JWT token in cookies.
 
 For support and questions:
 - Create an issue in the repository
-- Contact: jbros2513@gmail.com
-```
+- Contact: johanbiju02@gmail.com
