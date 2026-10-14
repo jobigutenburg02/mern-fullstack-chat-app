@@ -1,109 +1,107 @@
-import { create } from "zustand";
-import { axiosInstance } from "../lib/axios";
-import toast from "react-hot-toast";
-import { io } from 'socket.io-client'
+import { create } from 'zustand'
+import toast from 'react-hot-toast'
 
-const MODE = import.meta.env.MODE || 'production'
+import { axiosInstance } from '../lib/axios'
+import { useAuthStore } from './useAuthStore'
 
-const BASE_URL = MODE === 'development' ? 'http://localhost:3000' : '/'
+const DEFAULT_MESSAGE_LIMIT = 50
+const DEFAULT_USER_LIMIT = 25
 
-export const useAuthStore = create((set, get) => ({
-    authUser: null,
-    isSigningUp: false,
-    isLoggingIn: false,
-    isUpdatingProfile: false,
-    isCheckingAuth: true,
-    onlineUsers: [],
-    socket: null,
+export const useChatStore = create((set, get) => ({
+    messages: [],
+    users: [],
+    selectedUser: null,
+    isUsersLoading: false,
+    isMessagesLoading: false,
+    messageListener: null,
 
-    checkAuth: async () => {
-        try{
-            const res = await axiosInstance.get('/auth/check')
-            set({ authUser: res.data })
-            get().connectSocket()
-        }catch(error){
-            console.log("Error while checking user authentication", error)
-            set({ authUser: null })
-        }finally{
-            set({ isCheckingAuth: false })
-        }
-    },
+    getUsers: async (params = {}) => {
+        const page = Number(params.page) || 1
+        const limit = Math.min(50, Math.max(1, Number(params.limit) || DEFAULT_USER_LIMIT))
 
-    signup: async (data) => {
-        set({ isSigningUp: true })
-        try{
-            const res = await axiosInstance.post('/auth/signup', data)
-            set({ authUser: res.data })
-            toast.success("User created successfully")
-            get().connectSocket()
-        }catch(error){
-            console.log("Error while signing up", error)
-            toast.error(error.response.data.message)
-        }finally{
-            set({ isSigningUp: false })
-        }
-    },
-
-    login: async (data) => {
-        set({ isLoggingIn: true });
+        set({ isUsersLoading: true })
         try {
-            const res = await axiosInstance.post("/auth/login", data);
-            set({ authUser: res.data });
-            toast.success("Logged in successfully");
-            get().connectSocket()
+            const res = await axiosInstance.get('/messages/users', {
+                params: { page, limit },
+            })
+            set({ users: res.data })
         } catch (error) {
-            console.log("Error while logging in", error)
-            toast.error(error.response.data.message);
+            toast.error(error.response?.data?.message || 'Failed to load users')
         } finally {
-            set({ isLoggingIn: false });
+            set({ isUsersLoading: false })
         }
     },
 
-    logout: async () => {
-        try{
-            await axiosInstance.post('/auth/logout')
-            set({ authUser: null })
-            toast.success("Logged out successfully")
-            get().disconnectSocket()
-        }catch(error){
-            console.log("Error while logging out", error)
-            toast.error(error.response.data.message)
+    getMessages: async (userId, page = 1, limit = DEFAULT_MESSAGE_LIMIT) => {
+        if (!userId) return
+
+        set({ isMessagesLoading: true })
+        try {
+            const res = await axiosInstance.get(`/messages/${userId}`, {
+                params: { page, limit },
+            })
+            set({ messages: res.data })
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to load messages')
+        } finally {
+            set({ isMessagesLoading: false })
         }
     },
 
-    updateProfile: async(data) => {
-        set({ isUpdatingProfile: true })
-        try{
-            const res = await axiosInstance.put('/auth/update-profile', data)
-            set({ authUser: res.data })
-            toast.success("User profile updated successfully")
-        }
-        catch(error){
-            console.log("Error while updating profile", error)
-            toast.error(error.response.data.message)
-        }finally{
-            set({ isUpdatingProfile: false })
+    sendMessage: async (messageData) => {
+        const { selectedUser, messages } = get()
+        if (!selectedUser) return
+
+        try {
+            const res = await axiosInstance.post(`/messages/send/${selectedUser._id}`, messageData)
+            set({ messages: [...messages, res.data] })
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to send message')
         }
     },
 
-    connectSocket: () => {
-        const { authUser } = get()
-        if(!authUser || get().socket?.connected) return;
+    subscribeToMessages: () => {
+        const { selectedUser } = get()
+        const socket = useAuthStore.getState().socket
 
-        const socket = io(BASE_URL, {
-            query: {
-                userId: authUser._id,
-            },
-        })
-        socket.connect()
+        if (!selectedUser || !socket) return
 
-        set({ socket: socket })
+        const existingListener = get().messageListener
+        if (existingListener) {
+            socket.off('newMessage', existingListener)
+        }
 
-        socket.on('getOnlineUsers', (userIds) => {
-            set({ onlineUsers: userIds })
-        })
+        const handler = (newMessage) => {
+            const activeSelectedUser = get().selectedUser
+            if (!activeSelectedUser) return
+
+            const isRelevantMessage =
+                newMessage.senderId === activeSelectedUser._id ||
+                newMessage.receiverId === activeSelectedUser._id
+
+            if (!isRelevantMessage) return
+
+            set((state) => {
+                const alreadyExists = state.messages.some((message) => message._id === newMessage._id)
+                if (alreadyExists) return state
+
+                return { messages: [...state.messages, newMessage] }
+            })
+        }
+
+        set({ messageListener: handler })
+        socket.on('newMessage', handler)
     },
-    disconnectSocket: () => {
-        if(get().socket?.connected) get().socket.disconnect()
+
+    unsubscribeFromMessages: () => {
+        const socket = useAuthStore.getState().socket
+        const { messageListener } = get()
+
+        if (!socket || !messageListener) return
+
+        socket.off('newMessage', messageListener)
+        set({ messageListener: null })
     },
+
+    setSelectedUser: (selectedUser) => set({ selectedUser }),
 }))
