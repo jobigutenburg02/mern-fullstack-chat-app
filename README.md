@@ -33,6 +33,101 @@ The runtime shape is a single Node.js backend that serves the built frontend bun
 
 ---
 
+## How Socket.io is used in this app
+
+Socket.io is used for realtime communication between the browser and the backend. The pattern in this project is simple and effective for a one-to-one chat system:
+
+### 1. Client connects to the backend socket
+
+In `frontend/src/store/useAuthStore.js`, after authentication succeeds, the app calls `connectSocket()` and creates a socket connection to the backend:
+
+```js
+const socket = io(BASE_URL, {
+  query: {
+    userId: authUser._id,
+  },
+})
+```
+
+This attaches the logged-in user's MongoDB `_id` as a query param so the server knows which user is connected.
+
+### 2. Server tracks online users in memory
+
+In `backend/src/lib/socket.js`, the server keeps a map like this:
+
+```js
+const userSocketMap = {}
+```
+
+When a client connects, the server stores:
+
+```js
+const userId = socket.handshake.query.userId
+if (userId) userSocketMap[userId] = socket.id
+```
+
+This allows the server to know which socket belongs to which user.
+
+### 3. Server broadcasts online users
+
+After each connection or disconnect, the server emits an event to all clients:
+
+```js
+io.emit("getOnlineUsers", Object.keys(userSocketMap))
+```
+
+The frontend listens for `getOnlineUsers` in `useAuthStore.js` and stores the active user IDs in `onlineUsers`:
+
+```js
+socket.on('getOnlineUsers', (userIds) => {
+  set({ onlineUsers: userIds })
+})
+```
+
+This powers the online/offline indicators in the sidebar.
+
+### 4. New messages are delivered in real time to the recipient
+
+When a message is sent, the backend saves it to MongoDB and then looks up the recipient's socket using the stored map:
+
+```js
+const receiverSocketId = getReceiverSocketId(receiverId)
+if (receiverSocketId) {
+  io.to(receiverSocketId).emit('newMessage', newMessage)
+}
+```
+
+This is handled in `backend/src/controllers/message.controller.js`.
+
+### 5. The frontend listens for incoming messages
+
+In `frontend/src/store/useChatStore.js`, the app subscribes to the `newMessage` event and updates the active chat instantly:
+
+```js
+socket.on('newMessage', (newMessage) => {
+  const isMessageSentFromSelectedUser = newMessage.senderId !== selectedUser._id
+  if (isMessageSentFromSelectedUser) return
+
+  set({
+    messages: [...get().messages, newMessage]
+  })
+})
+```
+
+This creates a realtime chat experience without requiring a page refresh.
+
+### 6. Why this works well here
+
+This app is designed around a one-to-one messaging model, so Socket.io is ideal because it lets the server:
+
+- know when a user is online,
+- push messages to the correct client,
+- and keep the sidebar and open conversation in sync.
+
+The tradeoff is that this in-memory map is not multi-instance safe. In production, if multiple backend servers run behind a load balancer, the map should be replaced with Redis-backed socket state and a Socket.io adapter.
+
+---
+
 ## Features
 
 - Real-time one-to-one chat using Socket.io
@@ -40,6 +135,70 @@ The runtime shape is a single Node.js backend that serves the built frontend bun
 - Profile image upload and user personalization via Cloudinary
 - Responsive, themeable UI with DaisyUI and Tailwind CSS
 - RESTful API endpoints for users and messages
+
+---
+
+## Performance Considerations and Potential Issues
+
+This app is functional and lightweight, but there are a few areas where performance may degrade as the number of users and messages increases.
+
+### 1. Full conversation history is loaded without pagination or limits
+
+In `backend/src/controllers/message.controller.js`, `getMessages` fetches all messages between two users with no sorting, limit, or pagination:
+
+- `Message.find({ $or: [...] })` loads every message in the conversation.
+- As chat history grows, response size and client rendering time will increase substantially.
+- A better pattern is to add sorting (for example, by `createdAt`) and pagination or a message window.
+
+Suggested improvement:
+
+```js
+const messages = await Message.find({ ... }).sort({ createdAt: 1 }).limit(100)
+```
+
+### 2. Sidebar fetches all users at once
+
+In `backend/src/controllers/message.controller.js`, `getUsers` returns every user except the current one with no search, filtering, or pagination.
+
+This can become slow when many users exist and the sidebar constantly re-renders or fetches this list. For a production app, it would be better to:
+
+- paginate the user list,
+- search/filter by name or email,
+- or fetch only active or recent contacts.
+
+### 3. Unbounded message list in the frontend state
+
+In `frontend/src/store/useChatStore.js`, messages are appended to the state array directly and the entire history is stored in memory. Long conversations can cause:
+
+- larger re-renders,
+- slower scroll performance,
+- higher memory usage on client devices.
+
+A more scalable approach is to keep only a page of messages in state and load older messages on demand.
+
+### 4. Socket listeners can be duplicated or poorly managed
+
+In `frontend/src/store/useChatStore.js`, `subscribeToMessages()` attaches a `newMessage` socket listener every time the selected user changes, and `unsubscribeFromMessages()` removes all listeners. This pattern can cause listener leakage or stale event handling, especially if component mounts/unmounts happen repeatedly. A cleaner approach is to attach a single listener with a scoped callback and clean it up properly.
+
+### 5. Message upload is synchronous and may block requests
+
+In `backend/src/controllers/message.controller.js`, if an image is present, the server uploads it to Cloudinary before saving the message. For large or many images, this can slow the API response substantially.
+
+Recommended improvements:
+
+- compress uploaded images on the client before sending,
+- impose size limits,
+- and consider async queueing or background processing for heavy media workflows.
+
+### 6. Repeated scroll operations and unnecessary logging
+
+In `frontend/src/App.jsx` and other components, there are multiple `console.log` calls. These are harmless in development but noisy in production and can hurt performance in large apps.
+
+Also, `scrollIntoView({ behavior: 'smooth' })` is triggered whenever message state changes. For long chat histories, this can be jarring and expensive; using a conditional scroll only when the user is near the bottom is more efficient.
+
+### 7. Potential duplicate socket connections
+
+In `frontend/src/store/useAuthStore.js`, `connectSocket()` checks whether a socket is already connected, but repeated auth checks or quick login/logout transitions may still create lifecycle edge cases. Making the socket lifecycle more explicit improves reliability and reduces accidental duplicate connections.
 
 ---
 
