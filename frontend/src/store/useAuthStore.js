@@ -1,0 +1,107 @@
+import { create } from 'zustand'
+import toast from 'react-hot-toast'
+
+import { axiosInstance } from '../lib/axios'
+import { useAuthStore } from './useAuthStore'
+
+const DEFAULT_MESSAGE_LIMIT = 50
+const DEFAULT_USER_LIMIT = 25
+
+export const useChatStore = create((set, get) => ({
+    messages: [],
+    users: [],
+    selectedUser: null,
+    isUsersLoading: false,
+    isMessagesLoading: false,
+    messageListener: null,
+
+    getUsers: async (params = {}) => {
+        const page = Number(params.page) || 1
+        const limit = Math.min(50, Math.max(1, Number(params.limit) || DEFAULT_USER_LIMIT))
+
+        set({ isUsersLoading: true })
+        try {
+            const res = await axiosInstance.get('/messages/users', {
+                params: { page, limit },
+            })
+            set({ users: res.data })
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to load users')
+        } finally {
+            set({ isUsersLoading: false })
+        }
+    },
+
+    getMessages: async (userId, page = 1, limit = DEFAULT_MESSAGE_LIMIT) => {
+        if (!userId) return
+
+        set({ isMessagesLoading: true })
+        try {
+            const res = await axiosInstance.get(`/messages/${userId}`, {
+                params: { page, limit },
+            })
+            set({ messages: res.data })
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to load messages')
+        } finally {
+            set({ isMessagesLoading: false })
+        }
+    },
+
+    sendMessage: async (messageData) => {
+        const { selectedUser, messages } = get()
+        if (!selectedUser) return
+
+        try {
+            const res = await axiosInstance.post(`/messages/send/${selectedUser._id}`, messageData)
+            set({ messages: [...messages, res.data] })
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to send message')
+        }
+    },
+
+    subscribeToMessages: () => {
+        const { selectedUser } = get()
+        const socket = useAuthStore.getState().socket
+
+        if (!selectedUser || !socket) return
+
+        const existingListener = get().messageListener
+        if (existingListener) {
+            socket.off('newMessage', existingListener)
+        }
+
+        const handler = (newMessage) => {
+            const activeSelectedUser = get().selectedUser
+            if (!activeSelectedUser) return
+
+            const isRelevantMessage =
+                newMessage.senderId === activeSelectedUser._id ||
+                newMessage.receiverId === activeSelectedUser._id
+
+            if (!isRelevantMessage) return
+
+            set((state) => {
+                const alreadyExists = state.messages.some((message) => message._id === newMessage._id)
+                if (alreadyExists) return state
+
+                return { messages: [...state.messages, newMessage] }
+            })
+        }
+
+        set({ messageListener: handler })
+        socket.on('newMessage', handler)
+    },
+
+    unsubscribeFromMessages: () => {
+        const socket = useAuthStore.getState().socket
+        const { messageListener } = get()
+
+        if (!socket || !messageListener) return
+
+        socket.off('newMessage', messageListener)
+        set({ messageListener: null })
+    },
+
+    setSelectedUser: (selectedUser) => set({ selectedUser }),
+}))
