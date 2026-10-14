@@ -9,7 +9,7 @@
 
 ## Repository Overview
 
-This project is a full-stack real-time chat application built with the MERN stack. The backend uses Express and MongoDB to manage users, messages, and JWT-based authentication, while the frontend is a React + Vite app for the chat experience, profile management, and auth pages.
+This project is a full-stack real-time chat application built with the MERN stack. The backend uses Express and MongoDB to manage users, messages, and JWT-based authentication, while the frontend uses React + Vite to provide a responsive chat experience. It also integrates Socket.io for realtime online presence and message delivery, along with Cloudinary for profile image uploads.
 
 The app is designed around a simple chat workflow:
 
@@ -29,7 +29,7 @@ The app is designed around a simple chat workflow:
 - `frontend/src/components/` — reusable UI like sidebar, chat window, and message input
 - `frontend/src/store/` — Zustand state management for auth and chat data
 
-The runtime shape is a single Node.js backend that serves the built frontend bundle while also exposing the APIs and socket event layer. In practice, the app acts as both the API server and the production web server for the client build.
+The runtime shape is a single Node.js backend that serves the built frontend bundle while also exposing the APIs and socket event layer. In practice, the app acts as both the API server and the production web host for the React app.
 
 ---
 
@@ -83,13 +83,11 @@ A more scalable approach is to keep only a page of messages in state and load ol
 
 ### 4. Socket listeners can be duplicated or poorly managed
 
-In `frontend/src/store/useChatStore.js`, `subscribeToMessages()` attaches a `newMessage` socket listener every time the selected user changes, and `unsubscribeFromMessages()` removes all listeners with `socket.off("newMessage")`.
-
-This pattern can cause listener leakage or stale event handling, especially if component mounts/unmounts happen repeatedly. A cleaner approach is to attach a single listener with a scoped callback or remove only the exact handler that was added.
+In `frontend/src/store/useChatStore.js`, `subscribeToMessages()` attaches a `newMessage` socket listener every time the selected user changes, and `unsubscribeFromMessages()` removes all listeners. This pattern can cause listener leakage or stale event handling, especially if component mounts/unmounts happen repeatedly. A cleaner approach is to attach a single listener with a scoped callback and clean it up properly.
 
 ### 5. Message upload is synchronous and may block requests
 
-In `backend/src/controllers/message.controller.js`, if an image is present, the server uploads it to Cloudinary before saving the message. For large or many images, this can slow the API response and increase latency.
+In `backend/src/controllers/message.controller.js`, if an image is present, the server uploads it to Cloudinary before saving the message. For large or many images, this can slow the API response substantially.
 
 Recommended improvements:
 
@@ -101,11 +99,11 @@ Recommended improvements:
 
 In `frontend/src/App.jsx` and other components, there are multiple `console.log` calls. These are harmless in development but noisy in production and can hurt performance in large apps.
 
-Also, `scrollIntoView({ behavior: 'smooth' })` is triggered whenever message state changes. For long chat histories, this can be jarring and expensive; using a conditional scroll only when the user is near the bottom is a better UX/performance tradeoff.
+Also, `scrollIntoView({ behavior: 'smooth' })` is triggered whenever message state changes. For long chat histories, this can be jarring and expensive; using a conditional scroll only when the user is near the bottom is more efficient.
 
 ### 7. Potential duplicate socket connections
 
-In `frontend/src/store/useAuthStore.js`, `connectSocket()` checks whether a socket is already connected, but repeated auth checks or quick login/logout transitions may still create lifecycle edge cases. For production reliability, it is wise to guard socket creation more strictly and clean up stale connections when auth state changes.
+In `frontend/src/store/useAuthStore.js`, `connectSocket()` checks whether a socket is already connected, but repeated auth checks or quick login/logout transitions may still create lifecycle edge cases. Making the socket lifecycle more explicit improves reliability and reduces accidental duplicate connections.
 
 ---
 
@@ -173,6 +171,57 @@ NODE_ENV="development"
 
 **Note:**  
 All endpoints requiring authentication expect a valid JWT token in cookies.
+
+---
+
+## Production Workflow Example
+
+This project can be deployed as a single Node.js server that serves both the API and the built frontend bundle.
+
+### 1. Build frontend
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+This generates the production bundle in `frontend/dist`.
+
+### 2. Start backend in production
+
+```bash
+cd backend
+npm install
+NODE_ENV=production PORT=3000 JWT_SECRET=your_secret \
+MONGODB_URI="mongodb+srv://..." \
+CLOUDINARY_CLOUD_NAME=your_cloud_name \
+CLOUDINARY_API_KEY=your_api_key \
+CLOUDINARY_API_SECRET=your_api_secret \
+node src/index.js
+```
+
+### 3. Serve behind a reverse proxy (Nginx example)
+
+```nginx
+server {
+  listen 80;
+  server_name chat.example.com;
+
+  location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+```
+
+This pattern is useful for TLS termination, load balancing, and serving the app behind a custom domain.
 
 ---
 
